@@ -345,6 +345,18 @@ module ActionView
             # call 'Element.update', id, render(*options_for_render)
           end
 
+          def replace_html_if_exists(id, *options_for_render)
+            self << "if($('##{id}').length > 0) {"
+            replace_html(id, *options_for_render)
+            self << "}"
+          end
+
+          def replace_if_exists(id, *options_for_render)
+            self << "if($('##{id}').length > 0) {"
+            replace(id, *options_for_render)
+            self << "}"
+          end       
+
           # Replaces the "outer HTML" (i.e., the entire element, not just its
           # contents) of the DOM element with the given +id+.
           #
