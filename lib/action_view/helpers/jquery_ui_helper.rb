@@ -221,7 +221,7 @@ module ActionView
           options[:onUpdate] ||= "function(){" + remote_function(options) + "}"
         end
         
-        options.delete_if { |key, value| PrototypeHelper::AJAX_OPTIONS.include?(key) }
+        options.delete_if { |key, value| JqueryHelper::AJAX_OPTIONS.include?(key) }
         options[:update] = options.delete(:onUpdate) if options[:onUpdate]
         
         [:axis, :cancel, :containment, :cursor, :handle, :tolerance, :items, :placeholder].each do |option|
@@ -299,7 +299,7 @@ module ActionView
           options[:drop] ||= "function(ev, ui){" + remote_function(options) + "}"
         end
         
-        options.delete_if { |key, value| PrototypeHelper::AJAX_OPTIONS.include?(key) }
+        options.delete_if { |key, value| JqueryHelper::AJAX_OPTIONS.include?(key) }
 
         options[:accept] = array_or_string_for_javascript(options[:accept]) if options[:accept]    
         [:activeClass, :hoverClass, :tolerance].each do |option|
