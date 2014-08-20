@@ -18,6 +18,7 @@ module ActionView
     # See the documentation at http://script.aculo.us for more information on
     # using these helpers in your application.
     module JqueryUiHelper
+      JQUERY_VAR = JqueryHelper::JQUERY_VAR
       
       def jquery_id(id) #:nodoc:
         id.to_s.count('#.*,>+~:[/ ') == 0 ? "##{id}" : id
@@ -28,7 +29,7 @@ module ActionView
       end
           
       SCRIPTACULOUS_EFFECTS = {
-        :appear => {:method => 'fade', :mode => 'show'},
+        :appear => {:method => 'fadeIn'},
         :blind_down => {:method => 'blind', :mode => 'show', :options => {:direction => 'vertical'}},
         :blind_up => {:method => 'blind', :mode => 'hide', :options => {:direction => 'vertical'}},
         :blind_right => {:method => 'blind', :mode => 'show', :options => {:direction => 'horizontal'}},
@@ -37,7 +38,7 @@ module ActionView
         :bounce_out => {:method => 'bounce', :mode => 'hide', :options => {:direction => 'up'}},
         :drop_in => {:method => 'drop', :mode => 'show', :options => {:direction => 'up'}},
         :drop_out => {:method => 'drop', :mode => 'hide', :options => {:direction => 'down'}},
-        :fade => {:method => 'fade', :mode => 'hide'},
+        :fade => {:method => 'fadeOut'},
         :fold_in => {:method => 'fold', :mode => 'hide'},
         :fold_out => {:method => 'fold', :mode => 'show'},
         :grow => {:method => 'scale', :mode => 'show'},
@@ -49,7 +50,7 @@ module ActionView
         :squish => {:method => 'scale', :mode => 'hide', :options => {:origin => "['top','left']"}},
         :switch_on => {:method => 'clip', :mode => 'show', :options => {:direction => 'vertical'}},
         :switch_off => {:method => 'clip', :mode => 'hide', :options => {:direction => 'vertical'}},
-        :toggle_appear => {:method => 'fade', :mode => 'toggle'},
+        :toggle_appear => {:method => 'fadeToggle'},
         :toggle_slide => {:method => 'slide', :mode => 'toggle', :options => {:direction => 'up'}},
         :toggle_blind => {:method => 'blind', :mode => 'toggle', :options => {:direction => 'vertical'}},
       }
@@ -73,8 +74,8 @@ module ActionView
       # You can change the behaviour with various options, see
       # http://script.aculo.us for more documentation.
       def visual_effect(name, element_id = false, js_options = {})
-        element = element_id ? ActiveSupport::JSON.encode(jquery_id(element_id)) : "this"
-
+        element = element_id ? element_id : "this"
+        
         if SCRIPTACULOUS_EFFECTS.has_key? name.to_sym
           effect = SCRIPTACULOUS_EFFECTS[name.to_sym]
           name = effect[:method]
@@ -82,24 +83,30 @@ module ActionView
           js_options = js_options.merge(effect[:options]) if effect[:options]
         end
         
-        js_options[:queue] = if js_options[:queue].is_a?(Hash)
-          '{' + js_options[:queue].map {|k, v| k == :limit ? "#{k}:#{v}" : "#{k}:'#{v}'" }.join(',') + '}'
-        elsif js_options[:queue]
-          "'#{js_options[:queue]}'"
-        end if js_options[:queue]
-        
         [:color, :direction, :startcolor, :endcolor].each do |option|
           js_options[option] = "'#{js_options[option]}'" if js_options[option]
         end
         
-        js_options[:duration] = (js_options[:duration] * 1000).to_i if js_options.has_key? :duration
+        if js_options.has_key? :duration
+          speed = js_options.delete :duration
+          speed = (speed * 1000).to_i unless speed.nil?
+        else
+          speed = js_options.delete :speed
+        end
         
-        #if ['fadeIn','fadeOut','fadeToggle'].include?(name)
-        #  "$(\"#{jquery_id(element_id)}\").#{name}();"
-        #else
-          "$(#{element}).#{mode || "effect"}(\"#{name}\",#{options_for_javascript(js_options)});"
-        #end
-
+        if ['fadeIn','fadeOut','fadeToggle'].include?(name)
+          #	090905 - Jake - changed ' to \" so it passes assert_select_rjs with an id
+          javascript = "#{JQUERY_VAR}(\"#{jquery_id(element_id)}\").#{name}("
+          javascript << "#{speed}" unless speed.nil?
+          javascript << ");"
+        else
+          #	090905 - Jake - changed ' to \" so it passes "assert_select_rjs :effect, ID"
+          javascript = "#{JQUERY_VAR}(\"#{jquery_id(element_id)}\").#{mode || 'effect'}('#{name}'"
+          javascript << ",#{options_for_javascript(js_options)}" unless speed.nil? && js_options.empty?
+          javascript << ",#{speed}" unless speed.nil?
+          javascript << ");"
+        end
+        
       end
 
       # Makes the element with the DOM ID specified by +element_id+ sortable
@@ -178,18 +185,52 @@ module ActionView
       end
 
       def sortable_element_js(element_id, options = {}) #:nodoc:
-        options[:with]     ||= "Sortable.serialize(#{ActiveSupport::JSON.encode(element_id)})"
-        options[:onUpdate] ||= "function(){" + remote_function(options) + "}"
-        options.delete_if { |key, value| JqueryHelper::AJAX_OPTIONS.include?(key) }
-
-        [:tag, :overlap, :constraint, :handle].each do |option|
+        #convert similar attributes
+        options[:handle] = ".#{options[:handle]}" if options[:handle]
+        if options[:tag] || options[:only]
+          options[:items] = "> "
+          options[:items] << options.delete(:tag) if options[:tag]
+          options[:items] << ".#{options.delete(:only)}" if options[:only]
+        end
+        options[:connectWith] = options.delete(:containment).map {|x| "##{x}"} if options[:containment]
+        options[:containment] = options.delete(:container) if options[:container]
+        options[:dropOnEmpty] = false unless options[:dropOnEmpty]
+        options[:helper] = "'clone'" if options[:ghosting] == true
+        options[:axis] = case options.delete(:constraint)
+          when "vertical", :vertical
+            "y"
+          when "horizontal", :horizontal
+            "x"
+          when false
+            nil
+          when nil
+            "y"
+        end
+        options.delete(:axis) if options[:axis].nil?
+        options.delete(:overlap)
+        options.delete(:ghosting)
+        
+        if options[:onUpdate] || options[:url]
+          if options[:format]
+            options[:with] ||= "#{JQUERY_VAR}(this).sortable('serialize',{key:'#{element_id}[]', expression:#{options[:format]}})"
+            options.delete(:format)
+          else
+            options[:with] ||= "#{JQUERY_VAR}(this).sortable('serialize',{key:'#{element_id}[]'})"
+          end
+          
+          options[:onUpdate] ||= "function(){" + remote_function(options) + "}"
+        end
+        
+        options.delete_if { |key, value| PrototypeHelper::AJAX_OPTIONS.include?(key) }
+        options[:update] = options.delete(:onUpdate) if options[:onUpdate]
+        
+        [:axis, :cancel, :containment, :cursor, :handle, :tolerance, :items, :placeholder].each do |option|
           options[option] = "'#{options[option]}'" if options[option]
         end
-
-        options[:containment] = array_or_string_for_javascript(options[:containment]) if options[:containment]
-        options[:only] = array_or_string_for_javascript(options[:only]) if options[:only]
-
-        %(Sortable.create(#{ActiveSupport::JSON.encode(element_id)}, #{options_for_javascript(options)});)
+        
+        options[:connectWith] = array_or_string_for_javascript(options[:connectWith]) if options[:connectWith]
+        
+        %(#{JQUERY_VAR}('#{jquery_id(element_id)}').sortable(#{options_for_javascript(options)});)
       end
 
       # Makes the element with the DOM ID specified by +element_id+ draggable.
@@ -203,8 +244,8 @@ module ActionView
         javascript_tag(draggable_element_js(element_id, options).chop!)
       end
 
-      def draggable_element_js(element_id, options = {}) #:nodoc:
-        %(new Draggable(#{ActiveSupport::JSON.encode(element_id)}, #{options_for_javascript(options)});)
+      def draggable_element_js(element_id, options = {})
+        %(#{JQUERY_VAR}("#{jquery_id(element_id)}").draggable(#{options_for_javascript(options)});)
       end
 
       # Makes the element with the DOM ID specified by +element_id+ receive
@@ -248,18 +289,24 @@ module ActionView
         javascript_tag(drop_receiving_element_js(element_id, options).chop!)
       end
 
-      def drop_receiving_element_js(element_id, options = {}) #:nodoc:
-        options[:with]     ||= "'id=' + encodeURIComponent(element.id)"
-        options[:onDrop]   ||= "function(element){" + remote_function(options) + "}"
-        options.delete_if { |key, value| JqueryHelper::AJAX_OPTIONS.include?(key) }
+      def drop_receiving_element_js(element_id, options = {})
+        #convert similar options
+        options[:hoverClass] = options.delete(:hoverclass) if options[:hoverclass]
+        options[:drop] = options.delete(:onDrop) if options[:onDrop]
+        
+        if options[:drop] || options[:url]
+          options[:with] ||= "'id=' + encodeURIComponent(#{JQUERY_VAR}(ui.draggable).attr('id'))"
+          options[:drop] ||= "function(ev, ui){" + remote_function(options) + "}"
+        end
+        
+        options.delete_if { |key, value| PrototypeHelper::AJAX_OPTIONS.include?(key) }
 
-        options[:accept] = array_or_string_for_javascript(options[:accept]) if options[:accept]
-        options[:hoverclass] = "'#{options[:hoverclass]}'" if options[:hoverclass]
-
-        # Confirmation happens during the onDrop callback, so it can be removed from the options
-        options.delete(:confirm) if options[:confirm]
-
-        %(Droppables.add(#{ActiveSupport::JSON.encode(element_id)}, #{options_for_javascript(options)});)
+        options[:accept] = array_or_string_for_javascript(options[:accept]) if options[:accept]    
+        [:activeClass, :hoverClass, :tolerance].each do |option|
+          options[option] = "'#{options[option]}'" if options[option]
+        end
+        
+        %(#{JQUERY_VAR}('#{jquery_id(element_id)}').droppable(#{options_for_javascript(options)});)
       end
 
       protected

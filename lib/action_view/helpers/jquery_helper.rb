@@ -95,6 +95,10 @@ module ActionView
     # See JavaScriptGenerator for information on updating multiple elements
     # on the page in an Ajax response.
     module JqueryHelper
+      USE_PROTECTION = const_defined?(:DISABLE_JQUERY_FORGERY_PROTECTION) ? !DISABLE_JQUERY_FORGERY_PROTECTION : true
+      
+      JQUERY_VAR   = 'jQuery'
+      
       CALLBACKS    = Set.new([ :create, :uninitialized, :loading, :loaded,
                        :interactive, :complete, :failure, :success ] +
                        (100..599).to_a)
@@ -126,22 +130,22 @@ module ActionView
           update << "'#{options[:update]}'"
         end
 
-        function = update.empty? ?
-          "new Ajax.Request(" :
-          "new Ajax.Updater(#{update}, "
-
-        url_options = options[:url]
-        function << "'#{ERB::Util.html_escape(escape_javascript(url_for(url_options)))}'"
-        function << ", #{javascript_options})"
+        function = "#{JQUERY_VAR}.ajax(#{javascript_options})"
 
         function = "#{options[:before]}; #{function}" if options[:before]
         function = "#{function}; #{options[:after]}"  if options[:after]
         function = "if (#{options[:condition]}) { #{function}; }" if options[:condition]
         function = "if (confirm('#{escape_javascript(options[:confirm])}')) { #{function}; }" if options[:confirm]
-
-        return function.html_safe
+        return function
       end
 
+      # Calls remote function periodically
+      def periodically_call_remote(options = {})
+        frequency = options[:frequency] || 10 # every ten seconds by default
+        code = "setInterval(function() {#{remote_function(options)}}, #{frequency} * 1000)"
+        javascript_tag(code)
+      end
+      
       # All the methods were moved to GeneratorMethods so that
       # #include_helpers_from_context has nothing to overwrite.
       class JavaScriptGenerator #:nodoc:
@@ -325,9 +329,7 @@ module ActionView
             insertion = position.to_s.downcase
             insertion = 'append' if insertion == 'bottom'
             insertion = 'prepend' if insertion == 'top'
-            call "$(\"#{jquery_id(id)}\").#{insertion}", render(*options_for_render)
-            # content = javascript_object_for(render(*options_for_render))
-            # record "Element.insert(\"#{id}\", { #{position.to_s.downcase}: #{content} });"
+            call "#{JQUERY_VAR}(\"#{jquery_id(id)}\").#{insertion}", render(*options_for_render)
           end
 
           # Replaces the inner HTML of the DOM element with the given +id+.
@@ -341,8 +343,7 @@ module ActionView
           #   page.replace_html 'person-45', :partial => 'person', :object => @person
           #
           def replace_html(id, *options_for_render)
-            call "$(\"#{jquery_id(id)}\").html", render(*options_for_render)
-            # call 'Element.update', id, render(*options_for_render)
+            call "#{JQUERY_VAR}(\"#{jquery_id(id)}\").html", render(*options_for_render)
           end
 
           def replace_html_if_exists(id, *options_for_render)
@@ -388,8 +389,7 @@ module ActionView
           #   page.replace 'person_45', :partial => 'person', :object => @person
           #
           def replace(id, *options_for_render)
-            call "$(\"#{jquery_id(id)}\").replaceWith", render(*options_for_render)
-            #call 'Element.replace', id, render(*options_for_render)
+            call "#{JQUERY_VAR}(\"#{jquery_id(id)}\").replaceWith", render(*options_for_render)
           end
 
           # Removes the DOM elements with the given +ids+ from the page.
@@ -401,8 +401,7 @@ module ActionView
           #  page.remove 'person_23', 'person_9', 'person_2'
           #
           def remove(*ids)
-            call "$(\"#{jquery_ids(ids)}\").remove"
-            #loop_on_multiple_args 'Element.remove', ids
+            call "#{JQUERY_VAR}(\"#{jquery_ids(ids)}\").remove"
           end
 
           # Shows hidden DOM elements with the given +ids+.
@@ -414,8 +413,7 @@ module ActionView
           #  page.show 'person_6', 'person_13', 'person_223'
           #
           def show(*ids)
-            call "$(\"#{jquery_ids(ids)}\").show"
-            #loop_on_multiple_args 'Element.show', ids
+            call "#{JQUERY_VAR}(\"#{jquery_ids(ids)}\").show"
           end
 
           # Hides the visible DOM elements with the given +ids+.
@@ -427,8 +425,7 @@ module ActionView
           #  page.hide 'person_29', 'person_9', 'person_0'
           #
           def hide(*ids)
-            call "$(\"#{jquery_ids(ids)}\").hide"
-            #loop_on_multiple_args 'Element.hide', ids
+            call "#{JQUERY_VAR}(\"#{jquery_ids(ids)}\").hide"
           end
 
           # Toggles the visibility of the DOM elements with the given +ids+.
@@ -440,8 +437,7 @@ module ActionView
           #  page.toggle 'person_14', 'person_12', 'person_23'      # Shows the previously hidden elements
           #
           def toggle(*ids)
-            call "$(\"#{jquery_ids(ids)}\").toggle"
-            #loop_on_multiple_args 'Element.toggle', ids
+            call "#{JQUERY_VAR}(\"#{jquery_ids(ids)}\").toggle"
           end
 
           # Displays an alert dialog with the given +message+.
@@ -633,32 +629,111 @@ module ActionView
 
         def options_for_ajax(options)
           js_options = build_callbacks(options)
-
-          js_options['asynchronous'] = options[:type] != :synchronous
-          js_options['method']       = method_option_to_s(options[:method]) if options[:method]
-          js_options['insertion']    = "'#{options[:position].to_s.downcase}'" if options[:position]
-          js_options['evalScripts']  = options[:script].nil? || options[:script]
-
+          
+          url_options = options[:url]
+          url_options = url_options.merge(:escape => false) if url_options.is_a?(Hash)
+          js_options['url'] = "'#{url_for(url_options)}'"
+          js_options['async'] = false if options[:type] == :synchronous
+          js_options['type'] = options[:method] ? method_option_to_s(options[:method]) : ( options[:form] ? "'post'" : nil )
+          js_options['dataType'] = options[:datatype] ? "'#{options[:datatype]}'" : (options[:update] ? nil : "'script'")
+          
           if options[:form]
-            js_options['parameters'] = 'Form.serialize(this)'
+            js_options['data'] = "#{JQUERY_VAR}.param(#{JQUERY_VAR}(this).serializeArray())"
           elsif options[:submit]
-            js_options['parameters'] = "Form.serialize('#{options[:submit]}')"
+            js_options['data'] = "#{JQUERY_VAR}(\"##{options[:submit]}:input\").serialize()"
           elsif options[:with]
-            js_options['parameters'] = options[:with]
+            js_options['data'] = options[:with].gsub("Form.serialize(this.form)","#{JQUERY_VAR}.param(#{JQUERY_VAR}(this.form).serializeArray())")
           end
-
-          if protect_against_forgery? && !options[:form]
-            if js_options['parameters']
-              js_options['parameters'] << " + '&"
-            else
-              js_options['parameters'] = "'"
+          
+          js_options['type'] ||= "'post'"
+          if options[:method]
+            if method_option_to_s(options[:method]) == "'put'" || method_option_to_s(options[:method]) == "'delete'"
+              js_options['type'] = "'post'"
+              if js_options['data']
+                js_options['data'] << " + '&"
+              else
+                js_options['data'] = "'"
+              end
+              js_options['data'] << "_method=#{options[:method]}'"
             end
-            js_options['parameters'] << "#{request_forgery_protection_token}=' + encodeURIComponent('#{escape_javascript form_authenticity_token}')"
           end
-
-          options_for_javascript(js_options)
+          
+          if USE_PROTECTION && respond_to?('protect_against_forgery?') && protect_against_forgery?
+            if js_options['data']
+              js_options['data'] << " + '&"
+            else
+              js_options['data'] = "'"
+            end
+            js_options['data'] << "#{request_forgery_protection_token}=' + encodeURIComponent('#{escape_javascript form_authenticity_token}')"
+          end
+          js_options['data'] = "''" if js_options['type'] == "'post'" && js_options['data'].nil?
+          options_for_javascript(js_options.reject {|key, value| value.nil?})
         end
 
+        def build_update_for_success(html_id, insertion=nil)
+          insertion = build_insertion(insertion)
+          "#{JQUERY_VAR}('#{jquery_id(html_id)}').#{insertion}(request);"
+        end
+
+        def build_update_for_error(html_id, insertion=nil)
+          insertion = build_insertion(insertion)
+          "#{JQUERY_VAR}('#{jquery_id(html_id)}').#{insertion}(request.responseText);"
+        end
+
+        def build_insertion(insertion)
+          insertion = insertion ? insertion.to_s.downcase : 'html'
+          insertion = 'append' if insertion == 'bottom'
+          insertion = 'prepend' if insertion == 'top'
+          insertion
+        end
+
+        def build_observer(klass, name, options = {})
+          if options[:with] && (options[:with] !~ /[\{=(.]/)
+            options[:with] = "'#{options[:with]}=' + value"
+          else
+            options[:with] ||= 'value' unless options[:function]
+          end
+
+          callback = options[:function] || remote_function(options)
+          javascript  = "#{JQUERY_VAR}('#{jquery_id(name)}').delayedObserver("
+          javascript << "#{options[:frequency] || 0}, "
+          javascript << "function(element, value) {"
+          javascript << "#{callback}}"
+          #javascript << ", '#{options[:on]}'" if options[:on]
+          javascript << ")"
+          javascript_tag(javascript)
+        end
+        
+        def build_callbacks(options)
+          callbacks = {}
+          options[:beforeSend] = '';
+          [:uninitialized,:loading].each do |key|
+            options[:beforeSend] << (options[key].last == ';' ? options.delete(key) : options.delete(key) << ';') if options[key]
+          end
+          options.delete(:beforeSend) if options[:beforeSend].blank?
+          options[:complete] = options.delete(:loaded) if options[:loaded] 
+          options[:error] = options.delete(:failure) if options[:failure]
+          if options[:update]
+            if options[:update].is_a?(Hash)
+              options[:update][:error] = options[:update].delete(:failure) if options[:update][:failure]
+              if options[:update][:success]
+                options[:success] = build_update_for_success(options[:update][:success], options[:position]) << (options[:success] ? options[:success] : '')
+              end
+              if options[:update][:error]
+                options[:error] = build_update_for_error(options[:update][:error], options[:position]) << (options[:error] ? options[:error] : '')
+              end
+            else
+              options[:success] = build_update_for_success(options[:update], options[:position]) << (options[:success] ? options[:success] : '')
+            end
+          end
+          options.each do |callback, code|
+            if JQCALLBACKS.include?(callback)
+              callbacks[callback] = "function(request){#{code}}"
+            end
+          end
+          callbacks
+        end
+        
         def method_option_to_s(method)
           (method.is_a?(String) and !method.index("'").nil?) ? method : "'#{method}'"
         end
