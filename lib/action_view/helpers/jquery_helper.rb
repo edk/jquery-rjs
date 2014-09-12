@@ -98,13 +98,12 @@ module ActionView
       USE_PROTECTION = const_defined?(:DISABLE_JQUERY_FORGERY_PROTECTION) ? !DISABLE_JQUERY_FORGERY_PROTECTION : true
       
       JQUERY_VAR   = 'jQuery'
+                       
+      JQCALLBACKS = Set.new([ :beforeSend, :complete, :error, :success ] + (100..599).to_a)
       
-      CALLBACKS    = Set.new([ :create, :uninitialized, :loading, :loaded,
-                       :interactive, :complete, :failure, :success ] +
-                       (100..599).to_a)
       AJAX_OPTIONS = Set.new([ :before, :after, :condition, :url,
                        :asynchronous, :method, :insertion, :position,
-                       :form, :with, :update, :script, :type ]).merge(CALLBACKS)
+                       :form, :with, :update, :script ]).merge(JQCALLBACKS)
 
       # Returns the JavaScript needed for a remote function.
       # See the link_to_remote documentation at https://github.com/rails/prototype_legacy_helper as it takes the same arguments.
@@ -736,17 +735,6 @@ module ActionView
         
         def method_option_to_s(method)
           (method.is_a?(String) and !method.index("'").nil?) ? method : "'#{method}'"
-        end
-
-        def build_callbacks(options)
-          callbacks = {}
-          options.each do |callback, code|
-            if CALLBACKS.include?(callback)
-              name = 'on' + callback.to_s.capitalize
-              callbacks[name] = "function(request){#{code}}"
-            end
-          end
-          callbacks
         end
     end
 
