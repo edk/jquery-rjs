@@ -7,11 +7,6 @@ class JavaScriptHelperTest < ActionView::TestCase
 
   attr_accessor :formats, :output_buffer
 
-  def update_details(details)
-    @details = details
-    yield if block_given?
-  end
-
   def setup
     super
     ActiveSupport.escape_html_entities_in_json  = true

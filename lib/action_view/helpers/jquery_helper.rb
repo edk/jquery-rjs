@@ -571,7 +571,17 @@ module ActionView
             end
 
             def with_formats(*args)
-              @context ? @context.lookup_context.update_details(:formats => args) { yield } : yield
+              if @context
+                original_formats = @context.lookup_context.formats
+                begin
+                  @context.lookup_context.formats = args
+                  yield
+                ensure
+                  @context.lookup_context.formats = original_formats
+                end
+              else
+                yield
+              end
             end
 
             def javascript_object_for(object)

@@ -39,11 +39,6 @@ class Author::Nested < Author; end
 class PrototypeHelperBaseTest < ActionView::TestCase
   attr_accessor :formats, :output_buffer
 
-  def update_details(details)
-    @details = details
-    yield if block_given?
-  end
-
   def setup
     super
     @template = self
